@@ -5,137 +5,103 @@
 <title>SPC / Passkey Demo – version alignée rsolomakhin</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script>
-/************************************************************************************************
- *  Demo inspirée du code officiel Secure Payment Confirmation (SPC)
- *  https://rsolomakhin.github.io/pr/spc/
- *  ---------------------------------------------------------------
- *  1. createPaymentCredential()   – enrôle une *payment credential* (isPaymentCredential:true)
- *  2. payWithSPC()                – lance PaymentRequest + méthode "secure-payment-confirmation"
- *  3. payWithTxAuthSimple()       – fallback `txAuthSimple` cross‑device
- *
- *  Les appels de disponibilité suivent la même logique que la démo d'origine :
- *    • PaymentRequest.securePaymentConfirmationAvailability()
- *    • PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
- ************************************************************************************************/
+/*****************************************************************************************
+ *  DEMO SPC  – version sans méthode dédiée de détection
+ *  --------------------------------------------------------------------------------------
+ *  1. createPaymentCredential()      – enrôle une payment‑credential (isPaymentCredential:true)
+ *  2. payWithSPC()                   – tente SPC ; la disponibilité est déduite via
+ *                                     PaymentRequest.canMakePayment() sur une requête témoin
+ *  3. payWithTxAuthSimple()          – fallback cross‑device `txAuthSimple`
+ *****************************************************************************************/
 
-const RP_ID   = "greglibert.github.io";                  // <— votre GH Pages hostname
-const ORIGIN  = `https://${RP_ID}`;                       // besoin pour SPC payeeOrigin
-const STORAGE_KEY = 'demoPayCredRawId';                   // localStorage key
-
-/********************************* HELPERS *********************************************/
+const STORAGE_KEY = 'spcDemoRawId';            // localStorage
 const toB64 = ab => btoa(String.fromCharCode(...new Uint8Array(ab))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
-const fromB64 = b64 => Uint8Array.from(atob(b64.replace(/-/g,'+').replace(/_/g,'/')), c=>c.charCodeAt(0)).buffer;
-const rand = n => crypto.getRandomValues(new Uint8Array(n));
+const fromB64 = b64 => Uint8Array.from(atob(b64.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0)).buffer;
+const rnd = n => crypto.getRandomValues(new Uint8Array(n));
 
-/********************************* ENRÔLEMENT ******************************************/
+/******************************** 1. ENRÔLEMENT ***********************************/
 /**
- * Enrôle une *payment credential* (isPaymentCredential=true)
- * Spec: SPC §3.3 « Payment Credential Enrollment »
+ * Spécification : https://w3c.github.io/secure-payment-confirmation/#sctn-create-creds
  */
 async function createPaymentCredential(){
-  const userId = rand(16);
-  const opts = {
-    isPaymentCredential: true,
-    challenge: rand(32),
-    rp:{ name:'Demo Bank'},
-    user:{ id:userId, name:'alice@example.com', displayName:'Alice'},
-    pubKeyCredParams:[{ type:'public-key', alg:-7 }],
-    authenticatorSelection:{ authenticatorAttachment:'platform', residentKey:'required', userVerification:'required' },
-    timeout:60000
-  };
-  console.log('[Enroll] options', opts);
   try{
-    const cred = await navigator.credentials.create({ publicKey: opts });
+    const cred = await navigator.credentials.create({ publicKey:{
+      isPaymentCredential:true,
+      challenge:rnd(32),
+      rp:{ name:'Demo Bank' },          // pas de rp.id → le navigateur déduit l’host courant
+      user:{ id:rnd(16), name:'alice@example.com', displayName:'Alice' },
+      pubKeyCredParams:[{ type:'public-key', alg:-7 }],
+      authenticatorSelection:{ authenticatorAttachment:'platform', residentKey:'required', userVerification:'required' },
+      timeout:60000
+    }});
     localStorage.setItem(STORAGE_KEY, toB64(cred.rawId));
-    console.log('[Enroll] SUCCESS', cred);
-    alert('✅ Payment Credential enregistrée');
-  }catch(e){ console.error('[Enroll] error', e); alert('❌ '+e.message); }
+    console.log('[Enroll] OK', cred);
+    alert('✅ Payment credential enregistrée');
+  }catch(e){ console.error('[Enroll] KO', e); alert('❌ '+e.message); }
 }
 
-/********************************* SPC PAYMENT ******************************************/
+/*********************** utilitaire détection SPC ***************************/
 /**
- * Crée le PaymentRequest SPC (fonction utilitaire identique à la démo originale).
+ *   Approche recommandée dans les issues du groupe SPC : créer une requête factice
+ *   (0 € + challenge bidon) et appeler canMakePayment().
  */
-function buildSPCPaymentRequest(amountEUR, challenge){
-  return new PaymentRequest([
-    {
-      supportedMethods: 'secure-payment-confirmation',
-      data: {
-        action: 'authenticate',
-        credentialIds: [ fromB64(localStorage.getItem(STORAGE_KEY)) ],
-        challenge,
-        instrument:{ displayName:'Visa —1234' },
-        payeeName: 'Boutique Demo',
-        payeeOrigin: ORIGIN,
-        timeout: 60000,
-        browserBoundPubKeyCredParams:[
-          { type:'public-key', alg:-7 },
-          { type:'public-key', alg:-257 }
-        ]
-      }
-    }
-  ], {
-    total:{ label:'Total', amount:{ currency:'EUR', value:amountEUR } }
-  });
+async function isSPCSupported(){
+  if(!('PaymentRequest' in window)){ return false; }
+  try{
+    const probe = new PaymentRequest([
+      { supportedMethods:'secure-payment-confirmation', data:{
+          action:'authenticate',
+          credentialIds:[ new Uint8Array(1) ],
+          challenge:new Uint8Array(1),
+          instrument:{ displayName:'x', icon:'data:image/png;base64,iVBORw0KGgo=' },
+          payeeOrigin:'https://dummy.example'
+        }}
+    ],{ total:{ label:'dummy', amount:{ currency:'USD', value:'0' } } });
+    return await probe.canMakePayment();
+  }catch(e){ console.warn('[SPC] probe error', e); return false; }
 }
 
+/******************************** 2. PAIEMENT SPC *********************************/
 async function payWithSPC(){
-  if(!localStorage.getItem(STORAGE_KEY)){ alert('Enrôlez d\'abord la payment credential'); return; }
-
-  // ✔ Vérification disponibilité SPC (exactement comme la démo rsolomakhin)
-  if(!PaymentRequest || !PaymentRequest.securePaymentConfirmationAvailability){
-    alert('PaymentRequest.securePaymentConfirmationAvailability() non dispo');
+  if(!localStorage.getItem(STORAGE_KEY)){ alert('Enrôlez d\'abord'); return; }
+  if(!(await isSPCSupported())){
+    alert('SPC non disponible, utilisez le bouton fallback.');
     return;
   }
-  const available = await PaymentRequest.securePaymentConfirmationAvailability();
-  console.log('[SPC] availability =', available);
-  if(!available){ alert('SPC non supporté sur ce navigateur'); return; }
 
-  const challenge = rand(32);
-  const request = buildSPCPaymentRequest('11.00', challenge);
-
-  try{
-    const canMake = await request.canMakePayment();
-    console.log('[SPC] canMakePayment =', canMake);
-  }catch(e){ console.warn('[SPC] canMakePayment error', e); }
+  const request = new PaymentRequest([
+    { supportedMethods:'secure-payment-confirmation', data:{
+        action:'authenticate',
+        credentialIds:[ fromB64(localStorage.getItem(STORAGE_KEY)) ],
+        challenge:rnd(32),
+        instrument:{ displayName:'Visa —1234' },
+        payeeName:'Boutique Demo',
+        payeeOrigin:location.origin,
+        timeout:60000 }
+    }
+  ],{ total:{ label:'Total', amount:{ currency:'EUR', value:'11.00' } } });
 
   try{
     const resp = await request.show();
     await resp.complete('success');
-    console.log('[SPC] SUCCESS', resp);
+    console.log('[SPC] success', resp);
     alert('✅ Paiement SPC validé');
-  }catch(e){ console.error('[SPC] show() error', e); alert('❌ '+e.message); }
+  }catch(e){ console.error('[SPC] KO', e); alert('❌ '+e.message); }
 }
 
-/********************************* FALLBACK txAuthSimple ********************************/
+/******************************** 3. FALLBACK txAuthSimple ***********************/
 async function payWithTxAuthSimple(){
   if(!localStorage.getItem(STORAGE_KEY)){ alert('Enrôlez d\'abord'); return; }
-  const challenge = rand(32);
-  const opts = {
-    challenge,
-    allowCredentials:[{ id: fromB64(localStorage.getItem(STORAGE_KEY)), type:'public-key', transports:['hybrid','usb','ble','nfc'] }],
-    authenticatorSelection:{ authenticatorAttachment:'cross-platform' },
-    hints:['hybrid'], timeout:60000, userVerification:'required',
-    extensions:{ txAuthSimple:'Payer 9,99 € à Boutique Demo' }
-  };
-  console.log('[txAuthSimple] opts', opts);
+  const opts = { challenge:rnd(32),
+    allowCredentials:[{ id:fromB64(localStorage.getItem(STORAGE_KEY)), type:'public-key', transports:['hybrid','usb','ble','nfc'] }],
+    authenticatorSelection:{ authenticatorAttachment:'cross-platform' }, hints:['hybrid'],
+    userVerification:'required', timeout:60000,
+    extensions:{ txAuthSimple:'Payer 9,99 € à Boutique Demo' } };
   try{
     const cred = await navigator.credentials.get({ publicKey: opts });
-    console.log('[txAuthSimple] SUCCESS', cred);
+    console.log('[txAuthSimple] success', cred);
     alert('✅ Signature txAuthSimple');
-  }catch(e){ console.error('[txAuthSimple] error', e); alert('❌ '+e.message); }
-}
-
-/********************************* Tests de disponibilité ********************************/
-if(PublicKeyCredential?.isUserVerifyingPlatformAuthenticatorAvailable){
-  PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
-    .then(av=>console.log('UVPAA =', av))
-    .catch(e=>console.warn('UVPAA error', e));
-}
-if(PaymentRequest?.securePaymentConfirmationAvailability){
-  PaymentRequest.securePaymentConfirmationAvailability()
-    .then(av=>console.log('SPC availability =', av))
-    .catch(e=>console.warn('SPC availability error', e));
+  }catch(e){ console.error('[txAuthSimple] KO', e); alert('❌ '+e.message); }
 }
 </script>
 <style>
