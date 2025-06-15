@@ -15,7 +15,7 @@
  *    – Cross‑device (hybrid transport) : WebAuthn L3 §5.1.7 + CTAP 2.2 § 3.1
  *******************************************************************************************/
 
-const RP_ID = "greglibert.github.io";         // ← remplacez par foo.github.io
+//const RP_ID = "greglibert.github.io";         // ← remplacez par foo.github.io
 
 /***************** Helpers ****************************/ 
 const b64 = buf =>
@@ -36,7 +36,7 @@ const S = { userId: rand(16), credId: null };
 async function enroll() {
   const opts = {
     challenge: rand(32),
-    rp: { name: 'Demo Bank', id: RP_ID },
+    rp: { name: 'Demo Bank'}, //, id: RP_ID },
     user: { id: S.userId, name: 'alice@example.com', displayName: 'Alice' },
     pubKeyCredParams: [{ type: 'public-key', alg: -7 }],      // ES256
     authenticatorSelection: {
