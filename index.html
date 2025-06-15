@@ -2,141 +2,154 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<title>WebAuthn / SPC Demo – montant affiché</title>
+<title>SPC / Passkey Demo – version alignée rsolomakhin</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script>
-/********************************************************************************************
-*  DEMO PASSKEY + SECURE PAYMENT CONFIRMATION (SPC)
-*  -----------------------------------------------------------------------------------------
-*  ◼ Enrôlement d'une *payment credential*  ➜  navigator.credentials.create({ isPaymentCredential:true })
-*     Spécification : Secure Payment Confirmation §3.3 « Payment credential enrollment »
-*
-*  ◼ Paiement avec affichage OS (montant + commerçant)  ➜  PaymentRequest + SPC method
-*     Spécification : SPC WD §4 « PaymentRequest flow »
-*
-*  ◼ Fallback transaction simple  ➜  extension WebAuthn `txAuthSimple`
-*     Spécification : WebAuthn L2 §10.2  (note : l'affichage dépend du support plateforme)
-********************************************************************************************/
+/************************************************************************************************
+ *  Demo inspirée du code officiel Secure Payment Confirmation (SPC)
+ *  https://rsolomakhin.github.io/pr/spc/
+ *  ---------------------------------------------------------------
+ *  1. createPaymentCredential()   – enrôle une *payment credential* (isPaymentCredential:true)
+ *  2. payWithSPC()                – lance PaymentRequest + méthode "secure-payment-confirmation"
+ *  3. payWithTxAuthSimple()       – fallback `txAuthSimple` cross‑device
+ *
+ *  Les appels de disponibilité suivent la même logique que la démo d'origine :
+ *    • PaymentRequest.securePaymentConfirmationAvailability()
+ *    • PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+ ************************************************************************************************/
 
-const ORIGIN = `https://greglibert.github.io`;       // utilisé dans SPC
+const RP_ID   = "greglibert.github.io";                  // <— votre GH Pages hostname
+const ORIGIN  = `https://${RP_ID}`;                       // besoin pour SPC payeeOrigin
+const STORAGE_KEY = 'demoPayCredRawId';                   // localStorage key
 
-/********** Outils **********/ 
-const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
-const rng = n => crypto.getRandomValues(new Uint8Array(n));
+/********************************* HELPERS *********************************************/
+const toB64 = ab => btoa(String.fromCharCode(...new Uint8Array(ab))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+const fromB64 = b64 => Uint8Array.from(atob(b64.replace(/-/g,'+').replace(/_/g,'/')), c=>c.charCodeAt(0)).buffer;
+const rand = n => crypto.getRandomValues(new Uint8Array(n));
 
-/********** State ***********/
-const S = { userId: rng(16), credId: null };   // simple mémoire
-
-/*******************************************************************************************
- * ENRÔLEMENT Payment Credential (isPaymentCredential=true)
- * -----------------------------------------------------------------------------------------
- * Cette call prépare un passkey **taguée paiement**. Les navigateurs affichent ensuite une
- * UI spécialisée « Carte / Montant ». Basé sur la démo publique de R. Solomakhin :
- * https://rsolomakhin.github.io/pr/spc/
- *******************************************************************************************/
-async function enrollPaymentCredential() {
+/********************************* ENRÔLEMENT ******************************************/
+/**
+ * Enrôle une *payment credential* (isPaymentCredential=true)
+ * Spec: SPC §3.3 « Payment Credential Enrollment »
+ */
+async function createPaymentCredential(){
+  const userId = rand(16);
   const opts = {
-    isPaymentCredential: true,                    // *** indispensable ***
-    challenge: rng(32),
-    rp: { name: 'Demo Bank' },
-    user: { id: S.userId, name: 'alice@example.com', displayName: 'Alice' },
-    pubKeyCredParams: [{ type:'public-key', alg:-7 }],
-    authenticatorSelection: {
-      authenticatorAttachment: 'platform',       // paiement = platform de préférence
-      residentKey: 'required',
-      userVerification: 'required'
-    },
-    timeout: 60000,
-    extensions:{ credProps:true }
+    isPaymentCredential: true,
+    challenge: rand(32),
+    rp:{ name:'Demo Bank'},
+    user:{ id:userId, name:'alice@example.com', displayName:'Alice'},
+    pubKeyCredParams:[{ type:'public-key', alg:-7 }],
+    authenticatorSelection:{ authenticatorAttachment:'platform', residentKey:'required', userVerification:'required' },
+    timeout:60000
   };
-  console.log('[Enroll‑PayCred] →', opts);
-  try {
+  console.log('[Enroll] options', opts);
+  try{
     const cred = await navigator.credentials.create({ publicKey: opts });
-    S.credId = cred.rawId;
-    console.log('[Enroll‑PayCred] OK', b64(cred.rawId));
-    alert('✅ Credential paiement créée');
-  } catch(e){ console.error('[Enroll‑PayCred] KO', e); alert('❌ '+e.message); }
+    localStorage.setItem(STORAGE_KEY, toB64(cred.rawId));
+    console.log('[Enroll] SUCCESS', cred);
+    alert('✅ Payment Credential enregistrée');
+  }catch(e){ console.error('[Enroll] error', e); alert('❌ '+e.message); }
 }
 
-/*******************************************************************************************
- * Paiement SECURE PAYMENT CONFIRMATION
- * -----------------------------------------------------------------------------------------
- * L'UI système doit afficher : logo carte, montant, commerçant. Chrome ≥ 123, Edge idem.
- *******************************************************************************************/
-async function paySPC() {
-  if(!S.credId){ alert('Pas de credential, faites l\'enrôlement.'); return; }
-  const challenge = rng(32);
-  const amount   = '11.00';
-
-  const supported = 'PaymentRequest' in window && await PaymentRequest.isSecurePaymentConfirmationSupported?.();
-  if(!supported){ alert('SPC non supporté – essayez Chrome 123+ / Edge.'); return; }
-
-  const pr = new PaymentRequest([
+/********************************* SPC PAYMENT ******************************************/
+/**
+ * Crée le PaymentRequest SPC (fonction utilitaire identique à la démo originale).
+ */
+function buildSPCPaymentRequest(amountEUR, challenge){
+  return new PaymentRequest([
     {
       supportedMethods: 'secure-payment-confirmation',
       data: {
         action: 'authenticate',
-        credentialIds: [ S.credId ],
+        credentialIds: [ fromB64(localStorage.getItem(STORAGE_KEY)) ],
         challenge,
-        instrument: {
-          displayName: 'Visa ‑‑1234',
-          icon: ORIGIN + '/card-icon.png'        // optionnel
-        },
+        instrument:{ displayName:'Visa —1234' },
         payeeName: 'Boutique Demo',
         payeeOrigin: ORIGIN,
-        timeout: 60000
+        timeout: 60000,
+        browserBoundPubKeyCredParams:[
+          { type:'public-key', alg:-7 },
+          { type:'public-key', alg:-257 }
+        ]
       }
     }
   ], {
-    total: { label:'Total', amount:{ currency:'EUR', value: amount } }
+    total:{ label:'Total', amount:{ currency:'EUR', value:amountEUR } }
   });
-
-  try {
-    const resp = await pr.show();
-    await resp.complete('success');
-    console.log('[SPC] success', resp);
-    alert('✅ Paiement SPC confirmé');
-  } catch(e){ console.error('[SPC] KO', e); alert('❌ '+e.message); }
 }
 
-/*******************************************************************************************
- * txAuthSimple – affichage texte (si support OS)
- * -----------------------------------------------------------------------------------------
- * La plupart des plateformes n'affichent pas encore `txAuthSimple` ; seule Android 14
- * + Play services >= 24.22 et Chrome 124 montrent le texte. Cette démo reste un fallback
- * fonctionnel mais l'UX peut être silencieuse.
- *******************************************************************************************/
-async function payTxAuthSimpleFallback(){
-  if(!S.credId){ alert('Pas de credential, faites l\'enrôlement.'); return; }
-  const challenge = rng(32);
-  const amount='9.99';
+async function payWithSPC(){
+  if(!localStorage.getItem(STORAGE_KEY)){ alert('Enrôlez d\'abord la payment credential'); return; }
+
+  // ✔ Vérification disponibilité SPC (exactement comme la démo rsolomakhin)
+  if(!PaymentRequest || !PaymentRequest.securePaymentConfirmationAvailability){
+    alert('PaymentRequest.securePaymentConfirmationAvailability() non dispo');
+    return;
+  }
+  const available = await PaymentRequest.securePaymentConfirmationAvailability();
+  console.log('[SPC] availability =', available);
+  if(!available){ alert('SPC non supporté sur ce navigateur'); return; }
+
+  const challenge = rand(32);
+  const request = buildSPCPaymentRequest('11.00', challenge);
+
+  try{
+    const canMake = await request.canMakePayment();
+    console.log('[SPC] canMakePayment =', canMake);
+  }catch(e){ console.warn('[SPC] canMakePayment error', e); }
+
+  try{
+    const resp = await request.show();
+    await resp.complete('success');
+    console.log('[SPC] SUCCESS', resp);
+    alert('✅ Paiement SPC validé');
+  }catch(e){ console.error('[SPC] show() error', e); alert('❌ '+e.message); }
+}
+
+/********************************* FALLBACK txAuthSimple ********************************/
+async function payWithTxAuthSimple(){
+  if(!localStorage.getItem(STORAGE_KEY)){ alert('Enrôlez d\'abord'); return; }
+  const challenge = rand(32);
   const opts = {
     challenge,
-    allowCredentials:[{ id:S.credId, type:'public-key', transports:['hybrid','usb','ble','nfc'] }],
+    allowCredentials:[{ id: fromB64(localStorage.getItem(STORAGE_KEY)), type:'public-key', transports:['hybrid','usb','ble','nfc'] }],
     authenticatorSelection:{ authenticatorAttachment:'cross-platform' },
-    hints:['hybrid'],
-    userVerification:'required',
-    timeout:60000,
-    extensions:{ txAuthSimple:`Payer ${amount} € à Boutique Demo` }
+    hints:['hybrid'], timeout:60000, userVerification:'required',
+    extensions:{ txAuthSimple:'Payer 9,99 € à Boutique Demo' }
   };
-  console.log('[txAuthSimple] →', opts);
+  console.log('[txAuthSimple] opts', opts);
   try{
     const cred = await navigator.credentials.get({ publicKey: opts });
-    console.log('[txAuthSimple] success', cred); alert('✅ Signature txAuthSimple OK');
-  }catch(e){ console.error('[txAuthSimple] KO', e); alert('❌ '+e.message); }
+    console.log('[txAuthSimple] SUCCESS', cred);
+    alert('✅ Signature txAuthSimple');
+  }catch(e){ console.error('[txAuthSimple] error', e); alert('❌ '+e.message); }
+}
+
+/********************************* Tests de disponibilité ********************************/
+if(PublicKeyCredential?.isUserVerifyingPlatformAuthenticatorAvailable){
+  PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+    .then(av=>console.log('UVPAA =', av))
+    .catch(e=>console.warn('UVPAA error', e));
+}
+if(PaymentRequest?.securePaymentConfirmationAvailability){
+  PaymentRequest.securePaymentConfirmationAvailability()
+    .then(av=>console.log('SPC availability =', av))
+    .catch(e=>console.warn('SPC availability error', e));
 }
 </script>
 <style>
-body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;margin-top:2.5rem;gap:1rem}
+body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;margin-top:2.6rem;gap:1rem}
 button{padding:0.8rem 1.7rem;font-size:1rem;border:none;border-radius:0.75rem;background:#2563eb;color:#fff;cursor:pointer;transition:transform .15s;max-width:340px}
 button:hover{transform:scale(1.05)}
 </style>
 </head>
 <body>
-<h1>SPC · txAuthSimple Demo</h1>
-<button onclick="enrollPaymentCredential()">Enrôlement Payment Credential</button>
-<button onclick="paySPC()">Tester Secure Payment Confirmation</button>
-<button onclick="payTxAuthSimpleFallback()">Tester txAuthSimple (QR cross‑device)</button>
-<p>Déployez sur GitHub Pages et ouvrez l’URL sur Chrome 123+.<br>Sur Android 14, le texte `txAuthSimple` devrait apparaître ; sinon l’OS peut l’ignorer.</p>
+<h1>Secure Payment Confirmation Demo</h1>
+<button onclick="createPaymentCredential()">1️⃣ Enrôler une payment credential</button>
+<button onclick="payWithSPC()">2️⃣ Tester le paiement SPC (montant affiché)</button>
+<button onclick="payWithTxAuthSimple()">3️⃣ Fallback txAuthSimple (cross‑device)</button>
+<p>Assurez‑vous d'utiliser Chrome 123+ ou Edge équivalent. Sur mobile Android 14 le texte txAuthSimple
+sera affiché si l'extension est supportée.</p>
 </body>
 </html>
