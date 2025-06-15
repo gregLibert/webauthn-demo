@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>WebAuthn Demo – Passkeys · SPC · Cross‑device</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+/********************************************************************************************
+ *  Testlab WebAuthn destiné à être publié sur GitHub Pages (HTTPS automatique).
+ *  Toutes les API sont documentées via les specs officielles :
+ *    – WebAuthn Level 3 (W3C Working Draft, §7 Registration / §13 Authentication)
+ *      https://w3c.github.io/webauthn/
+ *    – Secure Payment Confirmation (W3C Working Draft, 2025‑06‑11)
+ *      https://w3c.github.io/secure-payment-confirmation/
+ *    – Cross‑device (hybrid transport) : WebAuthn L3 §5.1.7 + CTAP 2.2 § 3.1
+ *******************************************************************************************/
+
+const RP_ID = "gregLibert.github.io";         // ← remplacez par foo.github.io
+
+/***************** Helpers ****************************/ 
+const b64 = buf =>
+  btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+const rand = n => crypto.getRandomValues(new Uint8Array(n));
+
+/***************** State (mémoire) ********************/
+const S = { userId: rand(16), credId: null };
+
+/*------------------------------------------------------------------------------------------
+  Enrôlement passkey (navigator.credentials.create)
+  --------------------------------------------------
+  • API : `navigator.credentials.create({ publicKey })`
+  • Spécification : WebAuthn §7 *Registration ceremony*
+  • Sélection : authenticator platform + clé résident + UV requis
+-------------------------------------------------------------------------------------------*/
+async function enroll() {
+  const opts = {
+    challenge: rand(32),
+    rp: { name: 'Demo Bank', id: RP_ID },
+    user: { id: S.userId, name: 'alice@example.com', displayName: 'Alice' },
+    pubKeyCredParams: [{ type: 'public-key', alg: -7 }],      // ES256
+    authenticatorSelection: {
+      authenticatorAttachment: 'platform',   // Windows Hello, Touch ID…
+      residentKey: 'required',               // discoverable / passkey
+      userVerification: 'required'
+    },
+    attestation: 'none',
+    extensions: { credProps: true }
+  };
+  console.log('[Enroll] →', opts);
+  try {
+    const cred = await navigator.credentials.create({ publicKey: opts });
+    S.credId = cred.rawId;
+    console.log('[Enroll] OK – credId', b64(cred.rawId));
+    alert('✅ Passkey enregistrée');
+  } catch (e) {
+    console.error('[Enroll] KO', e);
+    alert('❌ ' + e.message);
+  }
+}
+
+/*------------------------------------------------------------------------------------------
+  Secure Payment Confirmation (SPC)
+  --------------------------------
+  • API : `PaymentRequest` + payment‑method "secure-payment-confirmation"
+  • Spécification : Secure Payment Confirmation WD §3 *The SPC payment method*
+  • Retourne true si le paiement est approuvé, false sinon.
+-------------------------------------------------------------------------------------------*/
+async function trySPC(challenge, amount) {
+  const supported = 'PaymentRequest' in window &&
+    await PaymentRequest.isSecurePaymentConfirmationSupported?.();
+  console.log('[SPC] supported =', supported);
+  if (!supported) return false;
+
+  const pr = new PaymentRequest([
+    {
+      supportedMethods: 'secure-payment-confirmation',
+      data: {
+        action: 'authenticate',
+        credentialIds: [S.credId],
+        challenge,
+        instrument: { displayName: 'Visa *1234' },
+        payeeName: 'Mon commerçant',
+        payeeOrigin: location.origin,
+        timeout: 60000
+      }
+    }
+  ], {
+    total: { label: 'Montant', amount: { currency: 'EUR', value: amount } }
+  });
+
+  try {
+    const resp = await pr.show();
+    await resp.complete('success');
+    console.log('[SPC] success', resp);
+    alert('✅ Paiement SPC');
+    return true;
+  } catch (e) {
+    console.warn('[SPC] KO', e);
+    return false;
+  }
+}
+
+/*------------------------------------------------------------------------------------------
+  Détection biométrique locale
+  ----------------------------
+  • API : `navigator.credentials.get` + extension `uvm` (User Verification Method)
+  • Spécification : WebAuthn §10 *Client Extension Processing* + IANA UVM registry
+  • Retourne true si l’utilisateur a utilisé fingerprint/face/voice (≠ PIN).
+-------------------------------------------------------------------------------------------*/
+async function isLocalBiometric(challenge) {
+  const opts = {
+    challenge,
+    allowCredentials: [{ id: S.credId, type: 'public-key', transports: ['internal'] }],
+    userVerification: 'required',
+    timeout: 30000,
+    extensions: { uvm: true }
+  };
+  console.log('[Bio] →', opts);
+  try {
+    const cred = await navigator.credentials.get({ publicKey: opts });
+    const uvm = cred.getClientExtensionResults().uvm || [];
+    console.log('[Bio] UVM', uvm);
+    const BIOMETRIC_MASK = 0x02 | 0x04 | 0x08; // face, voice, fingerprint
+    return uvm.some(([m]) => (m & BIOMETRIC_MASK));
+  } catch (e) {
+    console.warn('[Bio] KO', e);
+    return false;
+  }
+}
+
+/*------------------------------------------------------------------------------------------
+  txAuthSimple + hybrid transport (QR/BLE)
+  ---------------------------------------
+  • API : `navigator.credentials.get` avec extension `txAuthSimple`
+           et hints ["hybrid"] pour forcer le QR cross‑device.
+  • Spécification : WebAuthn L3 §10.2 txAuthSimple + §5.1.7 hybrid transport
+-------------------------------------------------------------------------------------------*/
+async function txAuthSimpleHybrid(challenge, amount) {
+  const opts = {
+    challenge,
+    allowCredentials: [{ id: S.credId, type: 'public-key', transports: ['hybrid', 'usb', 'ble', 'nfc'] }],
+    authenticatorSelection: { authenticatorAttachment: 'cross-platform' },
+    hints: ['hybrid'],
+    userVerification: 'required',
+    timeout: 60000,
+    extensions: {
+      txAuthSimple: `Payer ${amount} € à Mon commerçant`
+    }
+  };
+  console.log('[Hybrid] →', opts);
+  try {
+    const cred = await navigator.credentials.get({ publicKey: opts });
+    console.log('[Hybrid] success', cred);
+    alert('✅ Paiement confirmé (cross‑device)');
+  } catch (e) {
+    console.error('[Hybrid] KO', e);
+    alert('❌ ' + e.message);
+  }
+}
+
+/*==========================================================================================
+  SCÉNARIOS DE PAIEMENT
+  ---------------------
+  – payStandard   : Essaye d’abord SPC, sinon bascule en txAuthSimple hybride.
+  – payBiometric  : Vérifie un facteur biométrique local ;
+                    si oui => SPC sinon fallback hybrid.
+  – payCrossDevice : Force directement le flux cross‑device (utile sur un PC sans capteur).
+===========================================================================================*/
+async function payStandard() {
+  if (!S.credId) { alert('Enrôlez d\'abord'); return; }
+  const c = rand(32); const amt = '5.99';
+  if (!(await trySPC(c, amt))) await txAuthSimpleHybrid(c, amt);
+}
+
+async function payBiometric() {
+  if (!S.credId) { alert('Enrôlez d\'abord'); return; }
+  const c = rand(32); const amt = '9.99';
+  const bio = await isLocalBiometric(c);
+  console.log('[Bio] isBiometric =', bio);
+  if (bio) {
+    if (!(await trySPC(c, amt))) await txAuthSimpleHybrid(c, amt);
+  } else {
+    console.log('[Bio] pas biométrie → cross-device');
+    await txAuthSimpleHybrid(c, amt);
+  }
+}
+
+async function payCrossDevice() {
+  if (!S.credId) { alert('Enrôlez d\'abord'); return; }
+  const c = rand(32); const amt = '7.77';
+  await txAuthSimpleHybrid(c, amt);
+}
+</script>
+<style>
+body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;margin-top:2.8rem;gap:0.9rem}
+button{padding:0.7rem 1.6rem;font-size:1rem;border:none;border-radius:0.7rem;background:#2563eb;color:#fff;cursor:pointer;transition:transform .15s;max-width:320px}
+button:hover{transform:scale(1.05)}
+p{max-width:580px;text-align:center;font-size:0.9rem;line-height:1.35}
+</style>
+</head>
+<body>
+<h1>Démo Passkeys · Paiement</h1>
+<button onclick="enroll()">Enrôlement</button>
+<button onclick="payStandard()">Paiement SPC + fallback</button>
+<button onclick="payBiometric()">Paiement Biométrie obligatoire</button>
+<button onclick="payCrossDevice()">Paiement Cross‑device forcé</button>
+<p>Les logs complets apparaissent dans la console.</p>
+</body>
+</html>
