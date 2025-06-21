@@ -159,20 +159,12 @@
 
         // ---- Phase de vérification serveur (démonstration JS) ----
         log('\n--- Vérification serveur ---');
-		// 1. On reconstruit le buffer DER à partir du PEM stocké
-		// Supprime les lignes -----BEGIN-----, espaces et retours à la ligne
-		const b64 = pem
-		  .replace(/-----BEGIN PUBLIC KEY-----/, '')
-		  .replace(/-----END PUBLIC KEY-----/, '')
-		  .replace(/\s+/g, '');
-		const derBuff = Uint8Array.from(atob(b64), c => c.charCodeAt(0)).buffer;
-
-		// 2. On importe la clé SPKI depuis ce DER
-		const key = await crypto.subtle.importKey(
-		  'spki', derBuff,
-		  { name: 'ECDSA', namedCurve: 'P-256' },
-		  false, ['verify']
-		);
+        // 1. Importer la clé publique SPKI
+        const key = await window.crypto.subtle.importKey(
+          'spki', publicKeySPKI,
+          { name: 'ECDSA', namedCurve: 'P-256' },
+          false, ['verify']
+        );
         // 2. Reconstituer les données signées : authenticatorData || SHA-256(clientDataJSON)
         const authDataBuf = new Uint8Array(pkResp.response.authenticatorData);
         const clientDataBuf = new Uint8Array(pkResp.response.clientDataJSON);
@@ -182,12 +174,19 @@
         signedData.set(new Uint8Array(clientDataHash), authDataBuf.byteLength);
         // 3. Vérifier la signature ECDSA
         const signatureBuf = new Uint8Array(pkResp.response.signature);
+		
+		
+		log('publicKeySPKI (hex): '+Array.from(new Uint8Array(publicKeySPKI)).map(b=>b.toString(16).padStart(2,'0')).join(' '));
+        log('signedData (hex): '+Array.from(signedData).map(b=>b.toString(16).padStart(2,'0')).join(' '));
+        log('signatureBuf (hex): '+Array.from(signature).map(b=>b.toString(16).padStart(2,'0')).join(' '));
+		
         const valid = await window.crypto.subtle.verify(
-          { name: 'ECDSA', namedCurve: 'P-256', hash: { name: 'SHA-256' } },
-          key,
-          signatureBuf,
-          signedData
-        );
+		  { name: 'ECDSA', hash: { name: 'SHA-256' } },
+		  key,
+		  signatureBuf,
+		  signedData
+		);
+
         log('Signature valide server-side: ' + valid);
       } catch (err) {
         log('Erreur paiement: ' + err);
