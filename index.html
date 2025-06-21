@@ -178,7 +178,7 @@
 		
 		log('publicKeySPKI (hex): '+Array.from(new Uint8Array(publicKeySPKI)).map(b=>b.toString(16).padStart(2,'0')).join(' '));
         log('signedData (hex): '+Array.from(signedData).map(b=>b.toString(16).padStart(2,'0')).join(' '));
-        log('signatureBuf (hex): '+Array.from(signature).map(b=>b.toString(16).padStart(2,'0')).join(' '));
+        log('signatureBuf (hex): '+Array.from(signatureBuf).map(b=>b.toString(16).padStart(2,'0')).join(' '));
 		
         const valid = await window.crypto.subtle.verify(
 		  { name: 'ECDSA', hash: { name: 'SHA-256' } },
