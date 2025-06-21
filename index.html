@@ -34,8 +34,6 @@
       <pre id="log"></pre>
     </details>
   </div>
-  
-  <script src="https://cdn.jsdelivr.net/npm/cbor-web@1.3.1/cbor.min.js"></script>
 
   <script>
     const logEl = document.getElementById('log');
@@ -87,7 +85,7 @@
 
         showMessage('Enrôlement réussi');
 		
-		try {
+		
 		  // 1) Décoder l’attestation en CBOR
 		  const attObj = CBOR.decode(new Uint8Array(cred.response.attestationObject));
 		  // 2) Récupérer authData
@@ -100,11 +98,13 @@
 		  // 5) Tout ce qui reste est le COSE_Key encodé en CBOR
 		  const coseKeyCbor = authData.slice(offset);
 		  // 6) Loguer en Base64 pour fido2viewer
-		  log('publicKey COSE (CBOR→Base64):',
-					  btoa(String.fromCharCode(...coseKeyCbor)));
-		} catch (e) {
-		  log('Erreur canMakePayment: ' + e);
-		}
+		  log('publicKey COSE (CBOR→Base64):', btoa(String.fromCharCode(...coseKeyCbor)));
+		
+
+      } catch (err) {
+        log('Erreur enrôlement: ' + err);
+        showMessage('Erreur enrôlement: ' + err.message);
+      }
     };
 
     // Vérification SPC
@@ -157,7 +157,7 @@
         log('rawId (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.rawId))));
         log('authenticatorData (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.authenticatorData))));
         log('clientDataJSON: ' + new TextDecoder().decode(new Uint8Array(pkResp.response.clientDataJSON)));
-        log('clientDataJSON: ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.clientDataJSON))));
+        log('clientDataJSON: ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.clientDataJSON)));
         log('signature (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.signature))));
         if (pkResp.response.userHandle) {
           log('userHandle (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.userHandle))));
