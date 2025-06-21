@@ -84,6 +84,24 @@
         log('publicKeyAlgorithm: ' + publicKeyAlg);
 
         showMessage('Enrôlement réussi');
+		
+		// --- Test rapide de publicKeySPKI ---
+		try {
+		  // 1. On importe en « spki »/ECDSA-P256
+		  const testKey = await crypto.subtle.importKey(
+			'spki',
+			publicKeySPKI, 
+			{ name: 'ECDSA', namedCurve: 'P-256' },
+			true,              // on veut pouvoir exporter  
+			['verify']
+		  );
+		  // 2. On ré-exporte en JWK pour inspecter kty/crv/x/y
+		  const jwk = await crypto.subtle.exportKey('jwk', testKey);
+		  log('⚙️ publicKeySPKI → JWK: ' + JSON.stringify(jwk));
+		} catch (e) {
+		  log('❌ publicKeySPKI invalide : ' + e);
+		}
+
       } catch (err) {
         log('Erreur enrôlement: ' + err);
         showMessage('Erreur enrôlement: ' + err.message);
