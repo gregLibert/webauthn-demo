@@ -138,8 +138,7 @@
         log('methodName: ' + response.methodName);
         log('details.id: ' + pkResp.id);
         log('rawId (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.rawId))));
-        log('authenticatorData (base64): ' + btoa(String.fromCharCode(...new Uint8Array(\
-pkResp.response.authenticatorData))));
+        log('authenticatorData (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.authenticatorData))));
         log('clientDataJSON: ' + new TextDecoder().decode(new Uint8Array(pkResp.response.clientDataJSON)));
         log('signature (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.signature))));
         if (pkResp.response.userHandle) {
