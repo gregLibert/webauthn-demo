@@ -158,7 +158,8 @@
         log('rawId (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.rawId))));
         log('authenticatorData (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.authenticatorData))));
         log('clientDataJSON: ' + new TextDecoder().decode(new Uint8Array(pkResp.response.clientDataJSON)));
-        log('signature (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.signature))));
+        log('clientDataJSON (base64): ' + new TextDecoder().decode(new Uint8Array(pkResp.response.clientDataJSON)));
+        log('signature (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.clientDataJSON))));
         if (pkResp.response.userHandle) {
           log('userHandle (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.userHandle))));
         }
