@@ -45,6 +45,8 @@
     }
 
     let credentialId;
+    let publicKeySPKI;
+    let publicKeyAlg;
 
     // Phase d'enrôlement
     document.getElementById('btnEnrol').onclick = async () => {
@@ -69,25 +71,17 @@
 
       try {
         const cred = await navigator.credentials.create({ publicKey });
-        // Infos principales
         credentialId = new Uint8Array(cred.rawId);
         log('credential.id: ' + cred.id);
-        log('credential.type: ' + cred.type);
         log('rawId (base64): ' + btoa(String.fromCharCode(...credentialId)));
-        log('getClientExtensionResults: ' + JSON.stringify(cred.getClientExtensionResults()));
+        log('extensions: ' + JSON.stringify(cred.getClientExtensionResults()));
 
-        // Extraction de la clé publique et de l'algorithme
-        const pubKeyBuf = cred.response.getPublicKey();
-        const pubKeyAlg = cred.response.getPublicKeyAlgorithm();
-        const spkiBase64 = btoa(String.fromCharCode(...new Uint8Array(pubKeyBuf)));
-        log('publicKey SPKI (Base64): ' + spkiBase64);
-        log('publicKeyAlgorithm: ' + pubKeyAlg);
-
-        // Attestation + clientDataJSON pour debug
-        const attObj = new Uint8Array(cred.response.attestationObject);
-        const clientData = new Uint8Array(cred.response.clientDataJSON);
-        log('attestationObject (base64): ' + btoa(String.fromCharCode(...attObj)));
-        log('clientDataJSON: ' + new TextDecoder().decode(clientData));
+        // Extraction SPKI and alg
+        const pkBuf = cred.response.getPublicKey();
+        publicKeySPKI = pkBuf;
+        publicKeyAlg = cred.response.getPublicKeyAlgorithm();
+        log('publicKey SPKI (Base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkBuf))));
+        log('publicKeyAlgorithm: ' + publicKeyAlg);
 
         showMessage('Enrôlement réussi');
       } catch (err) {
@@ -95,22 +89,17 @@
         showMessage('Erreur enrôlement: ' + err.message);
       }
     };
-	
-	const tinyPng = 
-  'data:image/png;base64,' +
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMA' +
-  'AQAABQABDQotWAAAAABJRU5ErkJggg==';
 
     // Vérification SPC
     document.getElementById('btnCheck').onclick = async () => {
-      if (!credentialId) { showMessage('Enrôlement requis'); log('Veuillez déjà enrôler un dispositif.'); return; }
+      if (!credentialId) { showMessage('Enrôlement requis'); log('Enrôlement requis.'); return; }
       const methodData = [{
         supportedMethods: 'secure-payment-confirmation', data: {
           credentialIds: [credentialId.buffer],
           challenge: Uint8Array.from('pay-challenge', c => c.charCodeAt(0)),
           rpId: location.hostname,
           payeeOrigin: location.origin,
-          instrument: { displayName: 'Demo Card ****1234', icon: tinyPng },
+          instrument: { displayName: 'Demo Card ****1234', icon: "https://rsolomakhin.github.io/static/troy.png" },
           timeout: 60000
         }
       }];
@@ -127,9 +116,9 @@
       }
     };
 
-    // Paiement SPC
+    // Paiement SPC + Vérification serveur
     document.getElementById('btnPay').onclick = async () => {
-      if (!credentialId) { showMessage('Enrôlement requis'); log('Veuillez déjà enrôler un dispositif.'); return; }
+      if (!credentialId || !publicKeySPKI) { showMessage('Enrôlement requis'); log('Enrôlement requis.'); return; }
       const methodData = [{
         supportedMethods: 'secure-payment-confirmation', data: {
           credentialIds: [credentialId.buffer],
@@ -145,7 +134,6 @@
       try {
         const request = new PaymentRequest(methodData, details);
         const response = await request.show();
-        // Extraction des détails
         const pkResp = response.details;
         log('methodName: ' + response.methodName);
         log('details.id: ' + pkResp.id);
@@ -158,6 +146,25 @@
         }
         await response.complete('success');
         showMessage('Paiement réussi');
+
+        // ---- Phase de vérification serveur (démonstration JS) ----
+        log('\n--- Vérification serveur ---');
+        // 1. Importer la clé publique SPKI
+        const key = await window.crypto.subtle.importKey(
+          'spki', publicKeySPKI,
+          { name: 'ECDSA', namedCurve: 'P-256' },
+          false, ['verify']
+        );
+        // 2. Calculer le hash du clientDataJSON
+        const clientDataBuf = new Uint8Array(pkResp.response.clientDataJSON);
+        const clientHash = await window.crypto.subtle.digest('SHA-256', clientDataBuf);
+        // 3. Vérifier la signature
+        const signatureBuf = new Uint8Array(pkResp.response.signature);
+        const valid = await window.crypto.subtle.verify(
+          { name: 'ECDSA', hash: 'SHA-256' }, key,
+          signatureBuf, clientHash
+        );
+        log('Signature valide server-side: ' + valid);
       } catch (err) {
         log('Erreur paiement: ' + err);
         showMessage('Erreur paiement: ' + err.message);
