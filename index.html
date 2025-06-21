@@ -1,121 +1,139 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-<meta charset="UTF-8">
-<title>SPC / Passkey Demo – version alignée rsolomakhin</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<script>
-/*****************************************************************************************
- *  DEMO SPC  – version sans méthode dédiée de détection
- *  --------------------------------------------------------------------------------------
- *  1. createPaymentCredential()      – enrôle une payment‑credential (isPaymentCredential:true)
- *  2. payWithSPC()                   – tente SPC ; la disponibilité est déduite via
- *                                     PaymentRequest.canMakePayment() sur une requête témoin
- *  3. payWithTxAuthSimple()          – fallback cross‑device `txAuthSimple`
- *****************************************************************************************/
-
-const STORAGE_KEY = 'spcDemoRawId';            // localStorage
-const toB64 = ab => btoa(String.fromCharCode(...new Uint8Array(ab))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
-const fromB64 = b64 => Uint8Array.from(atob(b64.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0)).buffer;
-const rnd = n => crypto.getRandomValues(new Uint8Array(n));
-
-/******************************** 1. ENRÔLEMENT ***********************************/
-/**
- * Spécification : https://w3c.github.io/secure-payment-confirmation/#sctn-create-creds
- */
-async function createPaymentCredential(){
-  try{
-    const cred = await navigator.credentials.create({ publicKey:{
-      isPaymentCredential:true,
-      challenge:rnd(32),
-      rp:{ name:'Demo Bank' },          // pas de rp.id → le navigateur déduit l’host courant
-      user:{ id:rnd(16), name:'alice@example.com', displayName:'Alice' },
-      pubKeyCredParams:[{ type:'public-key', alg:-7 }],
-      authenticatorSelection:{ authenticatorAttachment:'platform', residentKey:'required', userVerification:'required' },
-      timeout:60000
-    }});
-    localStorage.setItem(STORAGE_KEY, toB64(cred.rawId));
-    console.log('[Enroll] OK', cred);
-    alert('✅ Payment credential enregistrée');
-  }catch(e){ console.error('[Enroll] KO', e); alert('❌ '+e.message); }
-}
-
-/*********************** utilitaire détection SPC ***************************/
-/**
- *   Approche recommandée dans les issues du groupe SPC : créer une requête factice
- *   (0 € + challenge bidon) et appeler canMakePayment().
- */
-async function isSPCSupported(){
-  if(!('PaymentRequest' in window)){ return false; }
-  try{
-    const probe = new PaymentRequest([
-      { supportedMethods:'secure-payment-confirmation', data:{
-          action:'authenticate',
-          credentialIds:[ new Uint8Array(1) ],
-          challenge:new Uint8Array(1),
-          instrument:{ displayName:'x', icon:'data:image/png;base64,iVBORw0KGgo=' },
-          payeeOrigin:'https://dummy.example'
-        }}
-    ],{ total:{ label:'dummy', amount:{ currency:'USD', value:'0' } } });
-    return await probe.canMakePayment();
-  }catch(e){ console.warn('[SPC] probe error', e); return false; }
-}
-
-/******************************** 2. PAIEMENT SPC *********************************/
-async function payWithSPC(){
-  if(!localStorage.getItem(STORAGE_KEY)){ alert('Enrôlez d\'abord'); return; }
-  if(!(await isSPCSupported())){
-    alert('SPC non disponible, utilisez le bouton fallback.');
-    return;
-  }
-
-  const request = new PaymentRequest([
-    { supportedMethods:'secure-payment-confirmation', data:{
-        action:'authenticate',
-        credentialIds:[ fromB64(localStorage.getItem(STORAGE_KEY)) ],
-        challenge:rnd(32),
-        instrument:{ displayName:'Visa —1234' },
-        payeeName:'Boutique Demo',
-        payeeOrigin:location.origin,
-        timeout:60000 }
-    }
-  ],{ total:{ label:'Total', amount:{ currency:'EUR', value:'11.00' } } });
-
-  try{
-    const resp = await request.show();
-    await resp.complete('success');
-    console.log('[SPC] success', resp);
-    alert('✅ Paiement SPC validé');
-  }catch(e){ console.error('[SPC] KO', e); alert('❌ '+e.message); }
-}
-
-/******************************** 3. FALLBACK txAuthSimple ***********************/
-async function payWithTxAuthSimple(){
-  if(!localStorage.getItem(STORAGE_KEY)){ alert('Enrôlez d\'abord'); return; }
-  const opts = { challenge:rnd(32),
-    allowCredentials:[{ id:fromB64(localStorage.getItem(STORAGE_KEY)), type:'public-key', transports:['hybrid','usb','ble','nfc'] }],
-    authenticatorSelection:{ authenticatorAttachment:'cross-platform' }, hints:['hybrid'],
-    userVerification:'required', timeout:60000,
-    extensions:{ txAuthSimple:'Payer 9,99 € à Boutique Demo' } };
-  try{
-    const cred = await navigator.credentials.get({ publicKey: opts });
-    console.log('[txAuthSimple] success', cred);
-    alert('✅ Signature txAuthSimple');
-  }catch(e){ console.error('[txAuthSimple] KO', e); alert('❌ '+e.message); }
-}
-</script>
-<style>
-body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;margin-top:2.6rem;gap:1rem}
-button{padding:0.8rem 1.7rem;font-size:1rem;border:none;border-radius:0.75rem;background:#2563eb;color:#fff;cursor:pointer;transition:transform .15s;max-width:340px}
-button:hover{transform:scale(1.05)}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Démo SPC Payment Request</title>
+  <style>
+    body { font-family: sans-serif; padding: 1em; }
+    h1, h2 { color: #333; }
+    button { padding: 0.5em 1em; margin: 0.5em 0; }
+    #logContainer details { margin-top: 1em; }
+    #log { white-space: pre-wrap; background: #f9f9f9; padding: 1em; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; }
+  </style>
 </head>
 <body>
-<h1>Secure Payment Confirmation Demo</h1>
-<button onclick="createPaymentCredential()">1️⃣ Enrôler une payment credential</button>
-<button onclick="payWithSPC()">2️⃣ Tester le paiement SPC (montant affiché)</button>
-<button onclick="payWithTxAuthSimple()">3️⃣ Fallback txAuthSimple (cross‑device)</button>
-<p>Assurez‑vous d'utiliser Chrome 123+ ou Edge équivalent. Sur mobile Android 14 le texte txAuthSimple
-sera affiché si l'extension est supportée.</p>
+  <h1>Démo Secure Payment Confirmation (SPC)</h1>
+
+  <section id="enrolment">
+    <h2>Phase d'enrôlement</h2>
+    <button id="btnEnrol">Enrôler le dispositif</button>
+  </section>
+
+  <section id="payment">
+    <h2>Phase de paiement</h2>
+    <button id="btnCheck">Vérifier la possibilité SPC</button>
+    <button id="btnPay">Payer avec SPC</button>
+  </section>
+
+  <div id="logContainer">
+    <details>
+      <summary>Afficher le log</summary>
+      <pre id="log"></pre>
+    </details>
+  </div>
+
+  <script>
+    const logEl = document.getElementById('log');
+    function log(msg) { logEl.textContent += msg + '\n'; }
+
+    let credentialId, publicKeyJwk;
+
+    // Phase d'enrôlement
+    document.getElementById('btnEnrol').onclick = async () => {
+      // Options simulées du serveur (challenge, rp, user, etc.)
+      const publicKey = {
+        challenge: Uint8Array.from('demo-challenge', c => c.charCodeAt(0)),
+        rp: { name: 'Demo SPC Bank' },
+        user: {
+          id: Uint8Array.from('demo-user', c=>c.charCodeAt(0)),
+          name: 'user@example.com',
+          displayName: 'Demo User'
+        },
+        pubKeyCredParams: [ { type: 'public-key', alg: -7 } ],
+        authenticatorSelection: { userVerification: 'required', residentKey: 'required' },
+        timeout: 60000,
+        extensions: { payment: { isPayment: true } }
+      };
+      log('Options enrôlement:\n' + JSON.stringify(publicKey, null, 2));
+      try {
+        const cred = await navigator.credentials.create({ publicKey });
+        // Récupération des éléments à envoyer au serveur
+        credentialId = new Uint8Array(cred.rawId);
+        const attObj = new Uint8Array(cred.response.attestationObject);
+        const clientData = new Uint8Array(cred.response.clientDataJSON);
+        // Pour la démo, on extrait la clef publique du JWK (simulé ici)
+        publicKeyJwk = { kty: 'EC', crv: 'P-256', x: '...', y: '...' };
+        log('credentialId (base64): ' + btoa(String.fromCharCode(...credentialId)));
+        log('attestationObject (base64): ' + btoa(String.fromCharCode(...attObj)));
+        log('clientDataJSON: ' + new TextDecoder().decode(clientData));
+      } catch (err) {
+        log('Erreur enrôlement: ' + err);
+      }
+    };
+
+    // Vérification de la disponibilité SPC
+    document.getElementById('btnCheck').onclick = async () => {
+      if (!credentialId) { log('Veuillez d\u00e9j\u00e0 enrôler un dispositif.'); return; }
+      const methodData = [{
+        supportedMethods: 'secure-payment-confirmation',
+        data: {
+          credentialIds: [credentialId.buffer],
+          challenge: Uint8Array.from('pay-challenge', c=>c.charCodeAt(0)),
+          instrument: { displayName: 'Demo Card ****1234', icon: '' },
+          payeeOrigin: location.origin,
+          timeout: 60000
+        }
+      }];
+      const details = { total: { label: 'Total', amount: { currency: 'EUR', value: '10.00' } } };
+      const request = new PaymentRequest(methodData, details);
+      try {
+        const can = await request.canMakePayment();
+        log('canMakePayment: ' + can);
+      } catch (err) {
+        log('Erreur canMakePayment: ' + err);
+      }
+    };
+
+    // Phase de paiement SPC
+    document.getElementById('btnPay').onclick = async () => {
+      if (!credentialId) { log('Veuillez d\u00e9j\u00e0 enr\u00f4ler un dispositif.'); return; }
+      const methodData = [{
+        supportedMethods: 'secure-payment-confirmation',
+        data: {
+          credentialIds: [credentialId.buffer],
+          challenge: Uint8Array.from('pay-challenge', c=>c.charCodeAt(0)),
+          instrument: { displayName: 'Demo Card ****1234', icon: '' },
+          payeeOrigin: location.origin,
+          timeout: 60000
+        }
+      }];
+      const details = { total: { label: 'Total', amount: { currency: 'EUR', value: '10.00' } } };
+      const request = new PaymentRequest(methodData, details);
+      try {
+        const response = await request.show();
+        log('PaymentResponse.methodName: ' + response.methodName);
+        log('Response.details (PublicKeyCredential): ' + JSON.stringify(response.details));
+        await response.complete('success');
+
+        // Vérification côté serveur (exemple JS)
+        log('\n-- Vérification serveur (exemple) --');
+        // 1. import publicKeyJwk
+        const spki = await window.crypto.subtle.importKey(
+          'jwk', publicKeyJwk,
+          { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']
+        );
+        // 2. calcul du hash du clientDataJSON
+        const cData = Uint8Array.from(atob(response.details.clientDataJSON), c=>c.charCodeAt(0));
+        const hash = await window.crypto.subtle.digest('SHA-256', cData);
+        // 3. vérification de la signature
+        const sig = Uint8Array.from(atob(response.details.signature), c=>c.charCodeAt(0));
+        const valid = await window.crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, spki, sig, hash);
+        log('Signature valide: ' + valid);
+      } catch (err) {
+        log('Erreur paiement: ' + err);
+      }
+    };
+  </script>
 </body>
 </html>
