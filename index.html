@@ -175,7 +175,7 @@
         // 3. Vérifier la signature ECDSA
         const signatureBuf = new Uint8Array(pkResp.response.signature);
         const valid = await window.crypto.subtle.verify(
-          { name: 'ECDSA', hash: { name: 'SHA-256' } },
+          { name: 'ECDSA', namedCurve: 'P-256', hash: { name: 'SHA-256' } },
           key,
           signatureBuf,
           signedData
