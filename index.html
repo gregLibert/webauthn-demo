@@ -8,12 +8,14 @@
     body { font-family: sans-serif; padding: 1em; }
     h1, h2 { color: #333; }
     button { padding: 0.5em 1em; margin: 0.5em 0; }
+    #message { color: #c00; margin: 0.5em 0; }
     #logContainer details { margin-top: 1em; }
     #log { white-space: pre-wrap; background: #f9f9f9; padding: 1em; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; }
   </style>
 </head>
 <body>
   <h1>Démo Secure Payment Confirmation (SPC)</h1>
+  <div id="message"></div>
 
   <section id="enrolment">
     <h2>Phase d'enrôlement</h2>
@@ -35,103 +37,103 @@
 
   <script>
     const logEl = document.getElementById('log');
+    const msgEl = document.getElementById('message');
     function log(msg) { logEl.textContent += msg + '\n'; }
+    function showMessage(msg) {
+      msgEl.textContent = msg;
+      setTimeout(() => msgEl.textContent = '', 5000);
+    }
 
     let credentialId, publicKeyJwk;
 
     // Phase d'enrôlement
     document.getElementById('btnEnrol').onclick = async () => {
-      // Options simulées du serveur (challenge, rp, user, etc.)
-      const publicKey = {
-        challenge: Uint8Array.from('demo-challenge', c => c.charCodeAt(0)),
-        rp: { name: 'Demo SPC Bank' },
-        user: {
-          id: Uint8Array.from('demo-user', c=>c.charCodeAt(0)),
-          name: 'user@example.com',
-          displayName: 'Demo User'
-        },
-        pubKeyCredParams: [ { type: 'public-key', alg: -7 } ],
-        authenticatorSelection: { userVerification: 'required', residentKey: 'required' },
-        timeout: 60000,
-        extensions: { payment: { isPayment: true } }
-      };
-      log('Options enrôlement:\n' + JSON.stringify(publicKey, null, 2));
+      showMessage('Enrôlement en cours…');
+      log('Options enrôlement:\n' + JSON.stringify({
+        challenge: 'demo-challenge', rp: { name: 'Demo SPC Bank' },
+        user: { id: 'demo-user', name: 'user@example.com', displayName: 'Demo User' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'required' },
+        timeout: 60000, extensions: { payment: { isPayment: true } }
+      }, null, 2));
       try {
+        const publicKey = {
+          challenge: Uint8Array.from('demo-challenge', c => c.charCodeAt(0)),
+          rp: { name: 'Demo SPC Bank' },
+          user: {
+            id: Uint8Array.from('demo-user', c => c.charCodeAt(0)),
+            name: 'user@example.com', displayName: 'Demo User'
+          },
+          pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+          authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'required' },
+          timeout: 60000,
+          extensions: { payment: { isPayment: true } }
+        };
         const cred = await navigator.credentials.create({ publicKey });
-        // Récupération des éléments à envoyer au serveur
         credentialId = new Uint8Array(cred.rawId);
         const attObj = new Uint8Array(cred.response.attestationObject);
         const clientData = new Uint8Array(cred.response.clientDataJSON);
-        // Pour la démo, on extrait la clef publique du JWK (simulé ici)
         publicKeyJwk = { kty: 'EC', crv: 'P-256', x: '...', y: '...' };
         log('credentialId (base64): ' + btoa(String.fromCharCode(...credentialId)));
         log('attestationObject (base64): ' + btoa(String.fromCharCode(...attObj)));
         log('clientDataJSON: ' + new TextDecoder().decode(clientData));
+        showMessage('Enrôlement réussi');
       } catch (err) {
         log('Erreur enrôlement: ' + err);
+        showMessage('Erreur enrôlement: ' + err.message);
       }
     };
 
     // Vérification de la disponibilité SPC
     document.getElementById('btnCheck').onclick = async () => {
-      if (!credentialId) { log('Veuillez d\u00e9j\u00e0 enrôler un dispositif.'); return; }
+      if (!credentialId) { log('Veuillez déjà enrôler un dispositif.'); showMessage('Enrôlement requis'); return; }
       const methodData = [{
-        supportedMethods: 'secure-payment-confirmation',
-        data: {
-          credentialIds: [credentialId.buffer],
-          challenge: Uint8Array.from('pay-challenge', c=>c.charCodeAt(0)),
-          instrument: { displayName: 'Demo Card ****1234', icon: '' },
-          payeeOrigin: location.origin,
-          timeout: 60000
+        supportedMethods: 'secure-payment-confirmation', data: {
+          credentialIds: [credentialId.buffer], challenge: Uint8Array.from('pay-challenge', c => c.charCodeAt(0)),
+          instrument: { displayName: 'Demo Card ****1234', icon: '' }, payeeOrigin: location.origin, timeout: 60000
         }
       }];
       const details = { total: { label: 'Total', amount: { currency: 'EUR', value: '10.00' } } };
-      const request = new PaymentRequest(methodData, details);
       try {
+        const request = new PaymentRequest(methodData, details);
         const can = await request.canMakePayment();
         log('canMakePayment: ' + can);
+        showMessage(can ? 'SPC disponible' : 'SPC non disponible');
       } catch (err) {
         log('Erreur canMakePayment: ' + err);
+        showMessage('Vérification SPC échouée: ' + err.message);
       }
     };
 
     // Phase de paiement SPC
     document.getElementById('btnPay').onclick = async () => {
-      if (!credentialId) { log('Veuillez d\u00e9j\u00e0 enr\u00f4ler un dispositif.'); return; }
+      if (!credentialId) { log('Veuillez déjà enrôler un dispositif.'); showMessage('Enrôlement requis'); return; }
       const methodData = [{
-        supportedMethods: 'secure-payment-confirmation',
-        data: {
-          credentialIds: [credentialId.buffer],
-          challenge: Uint8Array.from('pay-challenge', c=>c.charCodeAt(0)),
-          instrument: { displayName: 'Demo Card ****1234', icon: '' },
-          payeeOrigin: location.origin,
-          timeout: 60000
+        supportedMethods: 'secure-payment-confirmation', data: {
+          credentialIds: [credentialId.buffer], challenge: Uint8Array.from('pay-challenge', c => c.charCodeAt(0)),
+          instrument: { displayName: 'Demo Card ****1234', icon: '' }, payeeOrigin: location.origin, timeout: 60000
         }
       }];
       const details = { total: { label: 'Total', amount: { currency: 'EUR', value: '10.00' } } };
-      const request = new PaymentRequest(methodData, details);
       try {
+        const request = new PaymentRequest(methodData, details);
         const response = await request.show();
         log('PaymentResponse.methodName: ' + response.methodName);
         log('Response.details (PublicKeyCredential): ' + JSON.stringify(response.details));
         await response.complete('success');
+        showMessage('Paiement réussi');
 
         // Vérification côté serveur (exemple JS)
         log('\n-- Vérification serveur (exemple) --');
-        // 1. import publicKeyJwk
-        const spki = await window.crypto.subtle.importKey(
-          'jwk', publicKeyJwk,
-          { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']
-        );
-        // 2. calcul du hash du clientDataJSON
-        const cData = Uint8Array.from(atob(response.details.clientDataJSON), c=>c.charCodeAt(0));
+        const spki = await window.crypto.subtle.importKey('jwk', publicKeyJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+        const cData = Uint8Array.from(atob(response.details.clientDataJSON), c => c.charCodeAt(0));
         const hash = await window.crypto.subtle.digest('SHA-256', cData);
-        // 3. vérification de la signature
-        const sig = Uint8Array.from(atob(response.details.signature), c=>c.charCodeAt(0));
+        const sig = Uint8Array.from(atob(response.details.signature), c => c.charCodeAt(0));
         const valid = await window.crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, spki, sig, hash);
         log('Signature valide: ' + valid);
       } catch (err) {
         log('Erreur paiement: ' + err);
+        showMessage('Erreur paiement: ' + err.message);
       }
     };
   </script>
