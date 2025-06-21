@@ -34,7 +34,6 @@
       <pre id="log"></pre>
     </details>
   </div>
-<script src="https://cdn.jsdelivr.net/npm/cbor-web@1.3.1/cbor.min.js"></script>
 
   <script>
     const logEl = document.getElementById('log');
@@ -87,19 +86,11 @@
         showMessage('Enrôlement réussi');
 		
 		
-		  // 1) Décoder l’attestation en CBOR
-		  const attObj = CBOR.decode(new Uint8Array(cred.response.attestationObject));
-		  // 2) Récupérer authData
-		  const authData = new Uint8Array(attObj.authData);
-		  // 3) Sauter rpIdHash(32) + flags(1) + signCount(4) + aaguid(16)
-		  let offset = 32 + 1 + 4 + 16;
-		  // 4) Lire la longueur credentialId (2 octets big-endian)
-		  const credIdLen = new DataView(authData.buffer, offset, 2).getUint16(0, false);
-		  offset += 2 + credIdLen;
-		  // 5) Tout ce qui reste est le COSE_Key encodé en CBOR
-		  const coseKeyCbor = authData.slice(offset);
-		  // 6) Loguer en Base64 pour fido2viewer
-		  log('publicKey COSE (CBOR→Base64):', btoa(String.fromCharCode(...coseKeyCbor)));
+        // Conversion SPKI en PEM pour fido2viewer
+        const spkiDerBase64 = btoa(String.fromCharCode(...new Uint8Array(pkBuf)));
+        const pemLines = spkiDerBase64.match(/.{1,64}/g).join('\n');
+        const pem = `-----BEGIN PUBLIC KEY-----\n${pemLines}\n-----END PUBLIC KEY-----`;
+        log('publicKey PEM:\n' + pem);
 		
 
       } catch (err) {
