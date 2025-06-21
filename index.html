@@ -34,6 +34,8 @@
       <pre id="log"></pre>
     </details>
   </div>
+  
+  <script src="https://cdn.jsdelivr.net/npm/cbor-web@1.3.1/cbor.min.js"></script>
 
   <script>
     const logEl = document.getElementById('log');
@@ -85,27 +87,24 @@
 
         showMessage('Enrôlement réussi');
 		
-		// --- Test rapide de publicKeySPKI ---
 		try {
-		  // 1. On importe en « spki »/ECDSA-P256
-		  const testKey = await crypto.subtle.importKey(
-			'spki',
-			publicKeySPKI, 
-			{ name: 'ECDSA', namedCurve: 'P-256' },
-			true,              // on veut pouvoir exporter  
-			['verify']
-		  );
-		  // 2. On ré-exporte en JWK pour inspecter kty/crv/x/y
-		  const jwk = await crypto.subtle.exportKey('jwk', testKey);
-		  log('⚙️ publicKeySPKI → JWK: ' + JSON.stringify(jwk));
+		  // 1) Décoder l’attestation en CBOR
+		  const attObj = CBOR.decode(new Uint8Array(cred.response.attestationObject));
+		  // 2) Récupérer authData
+		  const authData = new Uint8Array(attObj.authData);
+		  // 3) Sauter rpIdHash(32) + flags(1) + signCount(4) + aaguid(16)
+		  let offset = 32 + 1 + 4 + 16;
+		  // 4) Lire la longueur credentialId (2 octets big-endian)
+		  const credIdLen = new DataView(authData.buffer, offset, 2).getUint16(0, false);
+		  offset += 2 + credIdLen;
+		  // 5) Tout ce qui reste est le COSE_Key encodé en CBOR
+		  const coseKeyCbor = authData.slice(offset);
+		  // 6) Loguer en Base64 pour fido2viewer
+		  log('publicKey COSE (CBOR→Base64):',
+					  btoa(String.fromCharCode(...coseKeyCbor)));
 		} catch (e) {
-		  log('❌ publicKeySPKI invalide : ' + e);
+		  log('Erreur canMakePayment: ' + e);
 		}
-
-      } catch (err) {
-        log('Erreur enrôlement: ' + err);
-        showMessage('Erreur enrôlement: ' + err.message);
-      }
     };
 
     // Vérification SPC
