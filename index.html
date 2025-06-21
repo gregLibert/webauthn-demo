@@ -76,7 +76,7 @@
         log('rawId (base64): ' + btoa(String.fromCharCode(...credentialId)));
         log('extensions: ' + JSON.stringify(cred.getClientExtensionResults()));
 
-        // Extraction SPKI and alg
+        // Extraction SPKI et algorithme
         const pkBuf = cred.response.getPublicKey();
         publicKeySPKI = pkBuf;
         publicKeyAlg = cred.response.getPublicKeyAlgorithm();
@@ -99,7 +99,7 @@
           challenge: Uint8Array.from('pay-challenge', c => c.charCodeAt(0)),
           rpId: location.hostname,
           payeeOrigin: location.origin,
-          instrument: { displayName: 'Demo Card ****1234', icon: "https://rsolomakhin.github.io/static/troy.png" },
+          instrument: { displayName: 'Demo Card ****1234', icon: 'https://rsolomakhin.github.io/static/troy.png' },
           timeout: 60000
         }
       }];
@@ -125,7 +125,7 @@
           challenge: Uint8Array.from('pay-challenge', c => c.charCodeAt(0)),
           rpId: location.hostname,
           payeeOrigin: location.origin,
-          instrument: { displayName: 'Demo Card ****1234', icon: "https://rsolomakhin.github.io/static/troy.png" },
+          instrument: { displayName: 'Demo Card ****1234', icon: 'https://rsolomakhin.github.io/static/troy.png' },
           timeout: 60000
         }
       }];
@@ -138,7 +138,8 @@
         log('methodName: ' + response.methodName);
         log('details.id: ' + pkResp.id);
         log('rawId (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.rawId))));
-        log('authenticatorData (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.authenticatorData))));
+        log('authenticatorData (base64): ' + btoa(String.fromCharCode(...new Uint8Array(\
+pkResp.response.authenticatorData))));
         log('clientDataJSON: ' + new TextDecoder().decode(new Uint8Array(pkResp.response.clientDataJSON)));
         log('signature (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.signature))));
         if (pkResp.response.userHandle) {
@@ -155,14 +156,20 @@
           { name: 'ECDSA', namedCurve: 'P-256' },
           false, ['verify']
         );
-        // 2. Calculer le hash du clientDataJSON
+        // 2. Reconstituer les données signées : authenticatorData || SHA-256(clientDataJSON)
+        const authDataBuf = new Uint8Array(pkResp.response.authenticatorData);
         const clientDataBuf = new Uint8Array(pkResp.response.clientDataJSON);
-        const clientHash = await window.crypto.subtle.digest('SHA-256', clientDataBuf);
-        // 3. Vérifier la signature
+        const clientDataHash = await window.crypto.subtle.digest('SHA-256', clientDataBuf);
+        const signedData = new Uint8Array(authDataBuf.byteLength + clientDataHash.byteLength);
+        signedData.set(authDataBuf, 0);
+        signedData.set(new Uint8Array(clientDataHash), authDataBuf.byteLength);
+        // 3. Vérifier la signature ECDSA
         const signatureBuf = new Uint8Array(pkResp.response.signature);
         const valid = await window.crypto.subtle.verify(
-          { name: 'ECDSA', hash: 'SHA-256' }, key,
-          signatureBuf, clientHash
+          { name: 'ECDSA', hash: { name: 'SHA-256' } },
+          key,
+          signatureBuf,
+          signedData
         );
         log('Signature valide server-side: ' + valid);
       } catch (err) {
