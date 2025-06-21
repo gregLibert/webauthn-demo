@@ -147,34 +147,47 @@
         await response.complete('success');
         showMessage('Paiement réussi');
 
-        // ---- Phase de vérification serveur (démonstration JS) ----
-        log('\n--- Vérification serveur ---');
-        // 1. Importer la clé publique SPKI
-        const key = await window.crypto.subtle.importKey(
-          'spki', publicKeySPKI,
-          { name: 'ECDSA', namedCurve: 'P-256' },
-          false, ['verify']
-        );
-        // 2. Reconstituer les données signées : authenticatorData || SHA-256(clientDataJSON)
-        const authDataBuf = new Uint8Array(pkResp.response.authenticatorData);
-        const clientDataBuf = new Uint8Array(pkResp.response.clientDataJSON);
-        const clientDataHash = await window.crypto.subtle.digest('SHA-256', clientDataBuf);
-        const signedData = new Uint8Array(authDataBuf.byteLength + clientDataHash.byteLength);
-        signedData.set(authDataBuf, 0);
-        signedData.set(new Uint8Array(clientDataHash), authDataBuf.byteLength);
-        // 3. Vérifier la signature ECDSA
-        const signatureBuf = new Uint8Array(pkResp.response.signature);
-        const valid = await window.crypto.subtle.verify(
-          { name: 'ECDSA', hash: { name: 'SHA-256' } },
-          key,
-          signatureBuf,
-          signedData
-        );
-        log('Signature valide server-side: ' + valid);
       } catch (err) {
         log('Erreur paiement: ' + err);
         showMessage('Erreur paiement: ' + err.message);
       }
+	  
+	  // ---- Phase de vérification serveur (in-browser) ----
+	log('\n--- Vérification serveur ---');
+	// 1. Import de la clé publique SPKI en ECDSA/P-256
+	const key = await crypto.subtle.importKey(
+	  'spki',
+	  publicKeySPKI,              // ArrayBuffer obtenu lors de l’enrôlement
+	  { name: 'ECDSA', namedCurve: 'P-256' },
+	  false,
+	  ['verify']
+	);
+
+	// 2. Concaténation authenticatorData || SHA-256(clientDataJSON)
+	const authDataBuf   = new Uint8Array(pkResp.response.authenticatorData);
+	const clientDataBuf = new Uint8Array(pkResp.response.clientDataJSON);
+	const clientHash    = await crypto.subtle.digest('SHA-256', clientDataBuf);
+	const signedData    = new Uint8Array(authDataBuf.byteLength + clientHash.byteLength);
+	signedData.set(authDataBuf, 0);
+	signedData.set(new Uint8Array(clientHash), authDataBuf.byteLength);
+
+	// 3. Récupération de la signature DER depuis le device
+	const sigBuf = new Uint8Array(pkResp.response.signature);
+
+	// 4. Vérification ECDSA (DER) 
+	//    → on passe un descriptor avec namedCurve et hash comme spécifié par WebCrypto
+	const valid = await crypto.subtle.verify(
+	  {
+		name: 'ECDSA',
+		hash: { name: 'SHA-256' },
+		namedCurve: 'P-256'
+	  },
+	  key,
+	  sigBuf,
+	  signedData
+	);
+
+	log('Signature valide client-side: ' + valid);
     };
   </script>
 </body>
