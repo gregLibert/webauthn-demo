@@ -12,8 +12,6 @@
     #logContainer details { margin-top: 1em; }
     #log { white-space: pre-wrap; background: #f9f9f9; padding: 1em; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; }
   </style>
-  <!-- Pour parser l'attestationObject si besoin -->
-  <script src="https://cdn.jsdelivr.net/npm/cbor-web@1.3.1/cbor.min.js"></script>
 </head>
 <body>
   <h1>Démo Secure Payment Confirmation (SPC)</h1>
@@ -46,22 +44,7 @@
       setTimeout(() => msgEl.textContent = '', 5000);
     }
 
-    let credentialId, publicKeyJwk;
-
-    // Parser d'exemple pour extraire publicKeyJwk (nécessite CBOR et conversion COSE→JWK côté client ou serveur)
-    function extractPublicKeyJwk(attestationObject) {
-      try {
-        const att = CBOR.decode(attestationObject);
-        const authData = new Uint8Array(att.authData);
-        // Skip headers: rpIdHash(32)+flags(1)+signCount(4)+aaguid(16)+credIdLen(2)
-        const offset = 32 + 1 + 4 + 16 + 2;
-        const coseKey = authData.slice(offset);
-        // Ici on renvoie brute la clé COSE pour démo; serveur peut convertir en JWK
-        return { coseKey: btoa(String.fromCharCode(...coseKey)) };
-      } catch (e) {
-        return { error: 'Parsing attestationObject failed' };
-      }
-    }
+    let credentialId;
 
     // Phase d'enrôlement
     document.getElementById('btnEnrol').onclick = async () => {
@@ -81,23 +64,31 @@
       log('=== ENRÔLEMENT ===');
       log('Options publicKey:\n' + JSON.stringify({
         challenge: 'demo-challenge', rp: publicKey.rp, user: { id: 'demo-user', name: publicKey.user.name },
-        authenticatorSelection: publicKey.authenticatorSelection, extensions: publicKey.extensions }, null, 2));
+        authenticatorSelection: publicKey.authenticatorSelection, extensions: publicKey.extensions
+      }, null, 2));
+
       try {
         const cred = await navigator.credentials.create({ publicKey });
-        // Extraction et logs MDN (PublicKeyCredential) ([developer.mozilla.org](https://developer.mozilla.org/en-US/docs/Web/API/PublicKeyCredential?utm_source=chatgpt.com))
+        // Infos principales
         credentialId = new Uint8Array(cred.rawId);
         log('credential.id: ' + cred.id);
         log('credential.type: ' + cred.type);
         log('rawId (base64): ' + btoa(String.fromCharCode(...credentialId)));
-        const ext = cred.getClientExtensionResults();
-        log('getClientExtensionResults: ' + JSON.stringify(ext));
-        const attBuf = new Uint8Array(cred.response.attestationObject);
-        const clientBuf = new Uint8Array(cred.response.clientDataJSON);
-        log('attestationObject (base64): ' + btoa(String.fromCharCode(...attBuf)));
-        log('clientDataJSON: ' + new TextDecoder().decode(clientBuf));
-        // Extraction clé publique brute (COSE) pour démo
-        publicKeyJwk = extractPublicKeyJwk(cred.response.attestationObject);
-        log('publicKey (COSE base64): ' + publicKeyJwk.coseKey);
+        log('getClientExtensionResults: ' + JSON.stringify(cred.getClientExtensionResults()));
+
+        // Extraction de la clé publique et de l'algorithme
+        const pubKeyBuf = cred.response.getPublicKey();
+        const pubKeyAlg = cred.response.getPublicKeyAlgorithm();
+        const spkiBase64 = btoa(String.fromCharCode(...new Uint8Array(pubKeyBuf)));
+        log('publicKey SPKI (Base64): ' + spkiBase64);
+        log('publicKeyAlgorithm: ' + pubKeyAlg);
+
+        // Attestation + clientDataJSON pour debug
+        const attObj = new Uint8Array(cred.response.attestationObject);
+        const clientData = new Uint8Array(cred.response.clientDataJSON);
+        log('attestationObject (base64): ' + btoa(String.fromCharCode(...attObj)));
+        log('clientDataJSON: ' + new TextDecoder().decode(clientData));
+
         showMessage('Enrôlement réussi');
       } catch (err) {
         log('Erreur enrôlement: ' + err);
@@ -105,16 +96,16 @@
       }
     };
 
-    // Vérification et paiement SPC (MDN ([developer.mozilla.org](https://developer.mozilla.org/en-US/docs/Web/API/Payment_Request_API/Using_secure_payment_confirmation)))
+    // Vérification SPC
     document.getElementById('btnCheck').onclick = async () => {
-      if (!credentialId) { log('Veuillez déjà enrôler un dispositif.'); showMessage('Enrôlement requis'); return; }
+      if (!credentialId) { showMessage('Enrôlement requis'); log('Veuillez déjà enrôler un dispositif.'); return; }
       const methodData = [{
         supportedMethods: 'secure-payment-confirmation', data: {
           credentialIds: [credentialId.buffer],
           challenge: Uint8Array.from('pay-challenge', c => c.charCodeAt(0)),
           rpId: location.hostname,
           payeeOrigin: location.origin,
-          instrument: { displayName: 'Demo Card ****1234' },
+          instrument: { displayName: 'Demo Card ****1234', icon: 'https://via.placeholder.com/48' },
           timeout: 60000
         }
       }];
@@ -131,15 +122,16 @@
       }
     };
 
+    // Paiement SPC
     document.getElementById('btnPay').onclick = async () => {
-      if (!credentialId) { log('Veuillez déjà enrôler un dispositif.'); showMessage('Enrôlement requis'); return; }
+      if (!credentialId) { showMessage('Enrôlement requis'); log('Veuillez déjà enrôler un dispositif.'); return; }
       const methodData = [{
         supportedMethods: 'secure-payment-confirmation', data: {
           credentialIds: [credentialId.buffer],
           challenge: Uint8Array.from('pay-challenge', c => c.charCodeAt(0)),
           rpId: location.hostname,
           payeeOrigin: location.origin,
-          instrument: { displayName: 'Demo Card ****1234' },
+          instrument: { displayName: 'Demo Card ****1234', icon: 'https://via.placeholder.com/48' },
           timeout: 60000
         }
       }];
@@ -148,20 +140,17 @@
       try {
         const request = new PaymentRequest(methodData, details);
         const response = await request.show();
-        // Extraction détails MDN PublicKeyCredentialAssertionResponse ([developer.mozilla.org](https://developer.mozilla.org/en-US/docs/Web/API/Payment_Request_API/Using_secure_payment_confirmation))
+        // Extraction des détails
         const pkResp = response.details;
         log('methodName: ' + response.methodName);
         log('details.id: ' + pkResp.id);
-        const rawIdBuf = new Uint8Array(pkResp.rawId);
-        log('rawId (base64): ' + btoa(String.fromCharCode(...rawIdBuf)));
-        const authData = new Uint8Array(pkResp.response.authenticatorData);
-        const clientData = new Uint8Array(pkResp.response.clientDataJSON);
-        const sig = new Uint8Array(pkResp.response.signature);
-        const userHandle = pkResp.response.userHandle ? new Uint8Array(pkResp.response.userHandle) : null;
-        log('authenticatorData (base64): ' + btoa(String.fromCharCode(...authData)));
-        log('clientDataJSON: ' + new TextDecoder().decode(clientData));
-        log('signature (base64): ' + btoa(String.fromCharCode(...sig)));
-        if (userHandle) log('userHandle (base64): ' + btoa(String.fromCharCode(...userHandle)));
+        log('rawId (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.rawId))));
+        log('authenticatorData (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.authenticatorData))));
+        log('clientDataJSON: ' + new TextDecoder().decode(new Uint8Array(pkResp.response.clientDataJSON)));
+        log('signature (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.signature))));
+        if (pkResp.response.userHandle) {
+          log('userHandle (base64): ' + btoa(String.fromCharCode(...new Uint8Array(pkResp.response.userHandle))));
+        }
         await response.complete('success');
         showMessage('Paiement réussi');
       } catch (err) {
